@@ -1,50 +1,59 @@
-const API_BASE =
-  process.env.NEXT_PUBLIC_EVALUATOR_API_URL ||
-  "http://127.0.0.1:8015";
+
+const API_URL = "http://127.0.0.1:8015";
+
+export type TestResult = {
+  name: string;
+  passed: boolean;
+  error?: string | null;
+};
 
 export type RunResult = {
   status: string;
-  tests_available: boolean;
-  score: number;
   passed: number;
   total: number;
-  tests: {
-    name: string;
-    passed: boolean;
-    error?: string;
-  }[];
-  stdout: string;
-  stderr: string;
-  error: string | null;
+  score: number;
   execution_time_ms: number;
+  tests_available?: boolean;
+  tests?: TestResult[];
+  error?: string | null;
+  stdout?: string;
+  stderr?: string;
 };
 
 export async function runCode(
   questionId: string,
-  code: string
+  code: string,
+  mode: "run" | "submit" = "run"
 ): Promise<RunResult> {
-  const response = await fetch(
-    `${API_BASE}/api/run`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        question_id: questionId,
-        code,
-      }),
-    }
-  );
+  const response = await fetch(`${API_URL}/api/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      question_id: questionId,
+      code,
+      mode,
+    }),
+  });
 
-  const data = await response.json();
+  let result: RunResult & { detail?: string };
 
-  if (!response.ok) {
+  try {
+    result = await response.json();
+  } catch {
     throw new Error(
-      data?.detail ||
-      "Unable to run the code."
+      `Server returned an invalid response (${response.status}).`
     );
   }
 
-  return data;
+  if (!response.ok) {
+    throw new Error(
+      typeof result.detail === "string"
+        ? result.detail
+        : `Code execution failed (${response.status}).`
+    );
+  }
+
+  return result;
 }

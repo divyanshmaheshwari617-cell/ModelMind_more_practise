@@ -1,10 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-
-from quality_gate import audit_questions, publication_status
-
-from problem_specs import enrich_question
+from jupyter_bridge import router as jupyter_router
 
 
 import ast
@@ -18,7 +15,16 @@ import textwrap
 import time
 from pathlib import Path
 
-from test_cases import TEST_CASES, build_setup
+from test_cases import TEST_CASES, PUBLIC_TEST_COUNT, PUBLIC_CASE_DETAILS, build_setup
+
+
+def public_test_count(question_id):
+    return min(
+        PUBLIC_TEST_COUNT.get(question_id, 2),
+        len(TEST_CASES[question_id]["tests"]),
+    )
+
+from problem_specs import enrich_question
 from question_bank import (
     QUESTIONS,
     public_question,
@@ -30,6 +36,8 @@ app = FastAPI(
     title="ModelMind More Practice Evaluator",
     version="1.0.0"
 )
+app.include_router(jupyter_router)
+
 # ---------------------------------------------------------
 # Question Bank API
 # ---------------------------------------------------------
@@ -37,26 +45,6 @@ app = FastAPI(
 # ---------------------------------------------------------
 # CORS
 # ---------------------------------------------------------
-
-@app.get("/api/quality-report")
-def quality_report():
-    return audit_questions(QUESTIONS)
-
-
-@app.get("/api/question-status/{question_id}")
-def question_status(question_id: str):
-    question = get_question(question_id)
-
-    if not question:
-        raise HTTPException(
-            status_code=404,
-            detail="Question not found"
-        )
-
-    return {
-        "question_id": question_id,
-        "status": publication_status(question),
-    }
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,39 +71,64 @@ def practice_mode(question):
 
 
 @app.get("/api/questions")
-
-@app.get("/api/questions")
 def get_questions():
     result = []
 
     for question in QUESTIONS:
+        question_id = question["id"]
         mode = practice_mode(question)
 
         case = (
-            TEST_CASES.get(question["id"], {})
+            TEST_CASES.get(question_id, {})
             if mode == "coding"
             else {}
         )
 
-        public_data = public_question(question)
-        public_data = enrich_question(public_data)
+        all_tests = case.get("tests", {})
 
-        public_data["practiceMode"] = mode
-        public_data["testsAvailable"] = bool(case)
-
-        public_data["visibleTests"] = (
-            list(case.get("tests", {}))[:2]
+        public_count = (
+            public_test_count(question_id)
             if case
-            else []
+            else 0
         )
 
-        result.append(public_data)
+        details = PUBLIC_CASE_DETAILS.get(
+            question_id, {}
+        )
+
+        visible_tests = []
+
+        for name in list(all_tests)[:public_count]:
+            spec = details.get(name, {})
+
+            visible_tests.append({
+                "name": name,
+                "input": spec.get("input"),
+                "expected": (
+                    repr(spec["expected"])
+                    if "expected" in spec
+                    else None
+                ),
+            })
+
+        result.append({
+            **enrich_question(
+                public_question(question)
+            ),
+            "practiceMode": mode,
+            "testsAvailable": bool(case),
+            "visibleTests": visible_tests,
+            "publicTestCount": public_count,
+            "hiddenTestCount": max(
+                0,
+                len(all_tests) - public_count
+            ),
+        })
 
     return result
 
 
-
-
+# ---------------------------------------------------------
 # ---------------------------------------------------------
 # Paths
 # ---------------------------------------------------------
@@ -264,7 +277,8 @@ def make_runner(
 ):
 
     all_tests = TEST_CASES[question_id]["tests"]
-    tests = dict(list(all_tests.items())[:2]) if mode == "run" else all_tests
+    public_count = public_test_count(question_id)
+    tests = dict(list(all_tests.items())[:public_count]) if mode == "run" else all_tests
 
     test_names = list(tests.keys())
 
@@ -348,6 +362,10 @@ try:
     ]
 
 
+    # Public diagnostic examples are explicitly tied to a question ID.
+    # The expected values are maintained beside tests in test_cases.py.
+    public_case_specs = test_cases.PUBLIC_CASE_DETAILS.get({question_id!r}, {{}})
+
     for test_name, test_function in test_items:
 
         try:
@@ -379,6 +397,29 @@ try:
                 )
             }})
 
+
+        # Diagnostic values are returned for verified public tests only.
+        # Direct function cases are evaluated independently for display; the
+        # original assertion remains the source of truth for pass/fail.
+        if len(result["tests"]) <= {public_count} and test_name in public_case_specs:
+            spec = public_case_specs[test_name]
+            detail = {{
+                "input": spec["input"],
+                "expected": repr(spec["expected"]),
+                "hidden": False,
+            }}
+            try:
+                if "function" in spec:
+                    args = spec.get("args", [spec.get("argument")])
+                    computed = namespace[spec["function"]](*args)
+                else:
+                    computed = namespace[spec["variable"]]
+                if hasattr(computed, "tolist"):
+                    computed = computed.tolist()
+                detail["actual"] = repr(computed)
+            except Exception as exc:
+                detail["actual"] = f"{{type(exc).__name__}}: {{exc}}"
+            result["tests"][-1].update(detail)
 
     # -----------------------------------------------------
     # Score
@@ -462,21 +503,9 @@ def health():
 
 @app.post("/api/run")
 def run_code(request: RunRequest):
-    
-    # The existing subprocess runner is not a security sandbox.
-    # Local development is permitted explicitly.
-    # Public execution remains disabled until an isolated
-    # judge service is implemented and verified.
-
-    if os.getenv("MODELMIND_LOCAL_JUDGE", "false").lower() != "true":
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Code execution is disabled. "
-                "A secure isolated judge is required "
-                "before public deployment."
-            )
-        )
+    # Host subprocess execution is only allowed for trusted local development.
+    if os.environ.get("MODELMIND_LOCAL_JUDGE", "").lower() != "true":
+        raise HTTPException(status_code=503, detail="Local code execution is disabled. Use a properly isolated judge for public deployment.")
 
     question_id = request.question_id
     question = get_question(question_id)
@@ -498,7 +527,7 @@ def run_code(request: RunRequest):
         raise HTTPException(status_code=400, detail="mode must be run or submit")
     total_tests = len(TEST_CASES[question_id]["tests"])
     if request.mode == "run":
-        total_tests = min(2, total_tests)
+        total_tests = min(public_test_count(question_id), total_tests)
 
 
     # -----------------------------------------------------
@@ -555,7 +584,15 @@ def run_code(request: RunRequest):
     shutil.copy2(BASE_DIR / "test_cases.py", run_dir / "test_cases.py")
 
 
-    setup_code = build_setup(question_id)
+    setup_code = (
+        ""
+        if question_id in {
+            "numpy-basic-001",
+            "pandas-basic-001",
+            "pandas-medium-001",
+        }
+        else build_setup(question_id)
+    )
 
 
     runner_path.write_text(
@@ -718,14 +755,19 @@ def run_code(request: RunRequest):
 
         if request.mode == "submit":
             for idx, test in enumerate(result.get("tests", [])):
-                if idx >= 2:
-                    test["name"] = f"Hidden test {idx - 1}"
-                    test.pop("error", None)
+                if idx >= public_test_count(question_id):
+                    passed = bool(test.get("passed", False))
+                    test.clear()
+                    test.update({
+                        "name": f"Hidden test {idx - public_test_count(question_id) + 1}",
+                        "passed": passed,
+                        "hidden": True,
+                    })
         result["tests_available"] = True
 
-        result["stdout"] = clean_stdout[-10000:]
+        result["stdout"] = clean_stdout[-10000:] if request.mode == "run" else ""
 
-        result["stderr"] = stderr[-10000:]
+        result["stderr"] = stderr[-10000:] if request.mode == "run" else ""
 
         result["execution_time_ms"] = execution_ms
 

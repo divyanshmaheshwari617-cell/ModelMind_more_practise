@@ -147,3 +147,61 @@ if __name__ == "__main__":
             ensure_ascii=False
         )
     )
+
+
+def audit_questions(questions=None):
+    """
+    Return the question-bank quality audit.
+    """
+    if questions is None or questions is QUESTIONS:
+        return audit()
+
+    # The existing audit checks the complete question bank.
+    # Custom question lists are not supported by this wrapper.
+    raise ValueError(
+        "Custom question lists are not supported."
+    )
+
+
+def publication_status(question):
+    """
+    Determine whether a question is ready for publication.
+    """
+    question_type = question.get("type", "")
+
+    if question_type not in ("Coding", "Debugging"):
+        if question_type == "Mathematics":
+            try:
+                float(question["expectedAnswer"])
+                return "numerical_ready"
+            except (KeyError, ValueError, TypeError):
+                pass
+
+        return "read_only"
+
+    question_id = question.get("id")
+
+    spec = SPECS.get(question_id, {})
+    test_registry = TEST_CASES.get(question_id, {})
+    tests = test_registry.get("tests", {})
+
+    required_fields = (
+        "inputFormat",
+        "outputFormat",
+        "constraints",
+        "examples",
+    )
+
+    if not question.get("starterCode"):
+        return "needs_review"
+
+    if any(not spec.get(field) for field in required_fields):
+        return "needs_review"
+
+    if len(spec.get("examples", [])) < 2:
+        return "needs_review"
+
+    if len(tests) < 3:
+        return "needs_review"
+
+    return "specification_complete"

@@ -1,0 +1,91 @@
+[
+  {
+    "id": "python-advanced-001",
+    "title": "Fix list mutation",
+    "question": "The function below is intended to remove all negative values. Fix the implementation.",
+    "type": "Debugging",
+    "level": "Advanced",
+    "starterCode": "def remove_negative(numbers):\n    for x in numbers:\n        if x < 0:\n            numbers.remove(x)\n    return numbers\n",
+    "existingTests": [],
+    "setupCode": ""
+  },
+  {
+    "id": "numpy-basic-001",
+    "title": "Create an array and calculate its mean",
+    "question": "Create a NumPy array containing 10, 20, 30, 40 and calculate its mean.",
+    "type": "Coding",
+    "level": "Basic",
+    "starterCode": "import numpy as np\n\narr = None\nmean = None\n",
+    "existingTests": [
+      "Array values",
+      "Array mean"
+    ],
+    "setupCode": "\nimport numpy as np\n\narr = np.array([\n    10,\n    20,\n    30,\n    40\n])\n\nmean = np.mean(arr)\n"
+  },
+  {
+    "id": "numpy-medium-001",
+    "title": "Normalize an array",
+    "question": "Normalize the array using min-max normalization:\n(x - min) / (max - min)",
+    "type": "Coding",
+    "level": "Medium",
+    "starterCode": "import numpy as np\n\narr = np.array([10, 20, 30, 40])\n# Create normalized\nnormalized = None\n",
+    "existingTests": [],
+    "setupCode": ""
+  },
+  {
+    "id": "numpy-advanced-001",
+    "title": "Standardize columns",
+    "question": "Standardize each column of X so that each column has mean approximately 0 and standard deviation 1.",
+    "type": "Coding",
+    "level": "Advanced",
+    "starterCode": "import numpy as np\n\nX = np.array([\n    [1.0, 10.0],\n    [2.0, 20.0],\n    [3.0, 30.0]\n])\n\nX_scaled = None\n",
+    "existingTests": [],
+    "setupCode": ""
+  },
+  {
+    "id": "pandas-basic-001",
+    "title": "Create a DataFrame",
+    "question": "Create a DataFrame containing names A, B, C and ages 18, 20, 22.",
+    "type": "Coding",
+    "level": "Basic",
+    "starterCode": "import pandas as pd\n\ndf = None\n",
+    "existingTests": [
+      "Age values",
+      "DataFrame columns"
+    ],
+    "setupCode": "\nimport pandas as pd\n\ndf = pd.DataFrame({\n    \"name\": [\n        \"A\",\n        \"B\",\n        \"C\"\n    ],\n\n    \"age\": [\n        18,\n        20,\n        22\n    ]\n})\n"
+  },
+  {
+    "id": "pandas-medium-001",
+    "title": "Median imputation",
+    "question": "Fill the missing Age value using the median of the Age column.",
+    "type": "Coding",
+    "level": "Medium",
+    "starterCode": "import pandas as pd\nimport numpy as np\n\ndf = pd.DataFrame({\n    'Age': [20, np.nan, 30, 25]\n})\n\n# Complete the preprocessing\n",
+    "existingTests": [
+      "Median imputation",
+      "No missing values"
+    ],
+    "setupCode": "\nimport pandas as pd\nimport numpy as np\n\ndf = pd.DataFrame({\n    \"Age\": [\n        20,\n        np.nan,\n        30,\n        25\n    ]\n})\n"
+  },
+  {
+    "id": "pandas-advanced-001",
+    "title": "Group and aggregate",
+    "question": "Given a DataFrame containing department and salary, calculate the average salary for every department.",
+    "type": "Coding",
+    "level": "Advanced",
+    "starterCode": "import pandas as pd\n\ndf = pd.DataFrame({\n    'Department': ['A', 'A', 'B', 'B'],\n    'Salary': [10, 20, 30, 50]\n})\n\nresult = None\n",
+    "existingTests": [],
+    "setupCode": ""
+  },
+  {
+    "id": "statistics-medium-001",
+    "title": "Calculate variance",
+    "question": "Write a function variance(values) that calculates population variance.",
+    "type": "Coding",
+    "level": "Medium",
+    "starterCode": "def variance(values):\n    # Write your solution\n    pass\n",
+    "existingTests": [],
+    "setupCode": ""
+  }
+]

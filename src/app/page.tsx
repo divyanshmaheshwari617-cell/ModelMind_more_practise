@@ -1,6 +1,8 @@
 
 "use client";
 
+import NotebookCell from "@/components/NotebookCell";
+import JudgePanel from "@/components/JudgePanel";
 import {
   useEffect,
   useMemo,
@@ -34,7 +36,9 @@ type Question = {
   starterCode?: string;
   practiceMode?: Mode;
   testsAvailable?: boolean;
-  visibleTests?: string[];
+  visibleTests?: (string | { name: string; input?: string | null; expected?: string | null })[];
+  publicTestCount?: number;
+  hiddenTestCount?: number;
   inputFormat?: string;
   outputFormat?: string;
   constraints?: string[];
@@ -238,8 +242,9 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
-  const [search, setSearch] = useState("");
   const [topic, setTopic] = useState("All");
+  const [concept, setConcept] = useState("All");
+  const [browseAll, setBrowseAll] = useState(false);
   const [level, setLevel] = useState("All");
   const [modeFilter, setModeFilter] = useState("All");
   const [selectedId, setSelectedId] = useState("");
@@ -257,6 +262,7 @@ export default function Home() {
   const [runResult, setRunResult] = useState<RunResult | null>(
     null
   );
+  const [lastRunAction, setLastRunAction] = useState<Action | null>(null);
   const [numericResult, setNumericResult] =
     useState<NumericalResult | null>(null);
   const [actionError, setActionError] = useState("");
@@ -269,6 +275,32 @@ export default function Home() {
   const [lastSubmission, setLastSubmission] = useState<
     Record<string, RunResult>
   >({});
+
+  const [progressLoaded, setProgressLoaded] = useState(false);
+
+  // Restore progress across browser reloads (local device only).
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("modelmind.practice.progress.v1");
+      if (!raw) return;
+      const saved = JSON.parse(raw) as {
+        solved?: string[];
+        codeById?: Record<string, string>;
+        lastSubmission?: Record<string, RunResult>;
+      };
+      if (Array.isArray(saved.solved)) setSolved(saved.solved.filter((x): x is string => typeof x === "string"));
+      if (saved.codeById && typeof saved.codeById === "object") setCodeById(saved.codeById);
+      if (saved.lastSubmission && typeof saved.lastSubmission === "object") setLastSubmission(saved.lastSubmission);
+    } catch { /* Invalid or unavailable browser storage */ }
+    finally { setProgressLoaded(true); }
+  }, []);
+
+  useEffect(() => {
+    if (!progressLoaded) return;
+    try {
+      window.localStorage.setItem("modelmind.practice.progress.v1", JSON.stringify({ solved, codeById, lastSubmission }));
+    } catch { /* Storage may be unavailable or full */ }
+  }, [progressLoaded, solved, codeById, lastSubmission]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -320,26 +352,39 @@ export default function Home() {
     [questions]
   );
 
-  const filtered = useMemo(() => {
-    return questions.filter((q) => {
-      const content = [
-        q.title,
-        q.question,
-        q.topic,
-        ...(q.tags || []),
-      ]
-        .join(" ")
-        .toLowerCase();
+  // Choose a topic before listing exercises.
+  // The concept list is derived from actual question metadata, not hardcoded labels.
+  const concepts = useMemo(() => {
+    const matchingTopic = questions.filter(
+      (q) => topic === "All" || q.topic === topic
+    );
+    const labels = new Set<string>();
+    matchingTopic.forEach((q) => {
+      [...(q.skills || []), ...(q.tags || []), q.title]
+        .filter((item) => typeof item === "string" && item.trim().length > 0)
+        .forEach((item) => labels.add(item.trim()));
+    });
+    return [...labels].sort((a, b) => a.localeCompare(b));
+  }, [questions, topic]);
 
+  const hasSelection =
+    browseAll || topic !== "All" || concept !== "All";
+
+  const filtered = useMemo(() => {
+    if (!hasSelection) return [];
+    return questions.filter((q) => {
+      const conceptMatch =
+        concept === "All" ||
+        [q.title, q.question, ...(q.skills || []), ...(q.tags || [])]
+          .join(" ").toLowerCase().includes(concept.toLowerCase());
       return (
         (topic === "All" || q.topic === topic) &&
+        conceptMatch &&
         (level === "All" || q.level === level) &&
-        (modeFilter === "All" ||
-          getMode(q) === modeFilter) &&
-        content.includes(search.toLowerCase())
+        (modeFilter === "All" || getMode(q) === modeFilter)
       );
     });
-  }, [questions, search, topic, level, modeFilter]);
+  }, [questions, topic, concept, level, modeFilter, hasSelection]);
 
   const question =
     filtered.find((q) => q.id === selectedId) ||
@@ -367,6 +412,7 @@ export default function Home() {
 
   function clearFeedback() {
     setRunResult(null);
+    setLastRunAction(null);
     setNumericResult(null);
     setActionError("");
     setActiveAction(null);
@@ -404,6 +450,7 @@ export default function Home() {
     setRunning(true);
     setActiveAction(action);
     setRunResult(null);
+    setLastRunAction(null);
     setActionError("");
 
     try {
@@ -414,6 +461,7 @@ export default function Home() {
       );
 
       setRunResult(result);
+      setLastRunAction(action);
 
       if (action === "submit") {
         setLastSubmission((prev) => ({
@@ -773,6 +821,58 @@ export default function Home() {
 
           .mm-editor { height: 310px; }
         }
+
+        /* ModelMind wide workspace: horizontal problem navigator */
+        .mm-page { background:#f5f7fc; padding:18px; font-family:Inter,Arial,Helvetica,sans-serif; }
+        .mm-container { max-width:1900px; }
+        .mm-header { margin-bottom:16px; }
+        .mm-header h1 { font-size:26px; }
+        .mm-layout { display:flex; flex-direction:column; gap:18px; }
+        .mm-topbar { padding:18px !important; }
+        .mm-topbar h2 { font-size:20px; margin-bottom:4px; }
+        .mm-topbar > .mm-muted { margin:6px 0; }
+        .mm-topbar .mm-progress { max-width:480px; }
+        .mm-filters { display:grid; grid-template-columns:minmax(240px,1.5fr) repeat(3,minmax(150px,1fr)); gap:12px; margin-top:18px; }
+        .mm-filters > div { margin-top:0 !important; min-width:0; }
+        .mm-question-strip { display:flex; flex-direction:row; gap:12px; overflow-x:auto; overflow-y:hidden; margin-top:16px; padding:3px 2px 12px; scrollbar-width:thin; scroll-snap-type:x proximity; }
+        .mm-question-button { flex:0 0 228px; width:228px; min-height:118px; border-radius:13px; margin:0; scroll-snap-align:start; padding:14px; transition:background .18s,border-color .18s,box-shadow .18s; }
+        .mm-question-button:hover { background:#faf9ff; border-color:#c7bdff; }
+        .mm-question-button.active { background:#efecff; border-color:#6047ee; box-shadow:0 5px 16px rgba(96,71,238,.12); }
+        .mm-question-button strong { font-size:14px; }
+        .mm-workspace { display:grid; grid-template-columns:minmax(350px,0.85fr) minmax(0,1.35fr); gap:18px; align-items:start; }
+        .mm-description-column, .mm-editor-column { min-width:0; }
+        .mm-description-column { padding:19px !important; }
+        .mm-editor-column > div:first-child { padding:13px !important; }
+        .mm-tab-blocks { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+        .mm-tab-blocks button { display:flex; flex-direction:column; gap:5px; text-align:left; padding:14px; border:1px solid #e3e8f2; border-radius:13px; background:#f8fafc; cursor:pointer; color:#344054; }
+        .mm-tab-blocks button strong { font-size:14px; }
+        .mm-tab-blocks button span { font-size:12px; color:#69758b; line-height:1.35; }
+        .mm-tab-blocks button:hover { border-color:#c7bdff; }
+        .mm-tab-blocks button.active { background:#efecff; border-color:#6047ee; box-shadow:0 5px 16px rgba(96,71,238,.10); color:#5038ce; }
+        .mm-section { margin-top:20px; }
+        .mm-actions { justify-content:flex-end; }
+        .mm-editor-column textarea[aria-label="Jupyter Python code editor"] { min-height:500px !important; font-size:15px !important; line-height:1.8 !important; }
+        @media (max-width:1150px) {
+          .mm-workspace { grid-template-columns:minmax(0,1fr); }
+          .mm-filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
+        }
+        @media (max-width:760px) {
+          .mm-page { padding:10px; }
+          .mm-header h1 { font-size:21px; }
+          .mm-topbar { padding:14px !important; }
+          .mm-filters { grid-template-columns:1fr; }
+          .mm-question-button { flex-basis:210px; width:210px; }
+          .mm-tab-blocks { grid-template-columns:1fr; }
+          .mm-editor-column textarea[aria-label="Jupyter Python code editor"] { min-height:390px !important; }
+        }
+        .mm-filters { grid-template-columns:repeat(4,minmax(135px,1fr)); }
+        .mm-browse-toggle { display:inline-flex; align-items:center; gap:8px; font-size:13px; color:#536076; cursor:pointer; margin-top:10px; }
+        .mm-browse-toggle input { accent-color:#6047ee; width:15px; height:15px; }
+        .mm-empty-prompt { display:flex; flex-direction:column; gap:6px; padding:18px; margin-top:14px; border:1px dashed #c9c4ef; border-radius:12px; background:#faf9ff; }
+        .mm-empty-prompt strong { font-size:15px; }
+        .mm-empty-prompt span { font-size:13px; line-height:1.6; color:#68758c; }
+        @media(max-width:1250px){.mm-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+        @media(max-width:760px){.mm-filters{grid-template-columns:1fr}}
       `}</style>
 
       <div className="mm-container">
@@ -799,13 +899,13 @@ export default function Home() {
 
         {!loading && !loadError && (
           <div className="mm-layout">
-            <aside style={card}>
+            <aside style={card} className="mm-topbar">
               <h2 style={{ marginTop: 0 }}>
                 Problems ({filtered.length})
               </h2>
 
               <p className="mm-muted">
-                Solved this session: {solved.length}
+                Solved: {solved.length}
               </p>
 
               <div className="mm-progress">
@@ -820,26 +920,32 @@ export default function Home() {
                 />
               </div>
 
-              <div style={{ marginTop: 18 }}>
-                <input
-                  style={inputStyle}
-                  placeholder="Search questions..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
-
+              <div className="mm-filters">
               <div style={{ marginTop: 12 }}>
                 <select
                   style={inputStyle}
                   value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
+                  onChange={(e) => { setTopic(e.target.value); setConcept("All"); }}
                 >
-                  <option value="All">All topics</option>
+                  <option value="All">Choose topic</option>
                   {topics.map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                <select
+                  aria-label="Select concept"
+                  style={inputStyle}
+                  value={concept}
+                  onChange={(e) => setConcept(e.target.value)}
+                >
+                  <option value="All">All concepts</option>
+                  {concepts.map((c) => (
+                    <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
               </div>
@@ -872,13 +978,23 @@ export default function Home() {
                 </select>
               </div>
 
-              <div
-                style={{
-                  maxHeight: 520,
-                  overflowY: "auto",
-                  marginTop: 17,
-                }}
-              >
+              </div>
+
+              <label className="mm-browse-toggle">
+                <input type="checkbox" checked={browseAll}
+                  onChange={(e) => setBrowseAll(e.target.checked)} />
+                Browse entire question bank
+              </label>
+
+              {!hasSelection && (
+                <div className="mm-empty-prompt">
+                  <strong>Choose what you want to practice</strong>
+                  <span>Select a topic, then narrow by concept, level or type.
+                    Use the concept selector to focus on Linear Regression or another skill.</span>
+                </div>
+              )}
+
+              <div className="mm-question-strip" aria-label="Scrollable problem list">
                 {filtered.map((q) => (
                   <button
                     key={q.id}
@@ -930,7 +1046,7 @@ export default function Home() {
 
                 {filtered.length === 0 && (
                   <p className="mm-muted">
-                    No questions match your filters.
+                    {hasSelection ? "No questions match these filters." : "Select a topic to start."}
                   </p>
                 )}
               </div>
@@ -939,15 +1055,16 @@ export default function Home() {
             <div>
               {question ? (
                 <div className="mm-workspace">
-                  <div style={card}>
-                    <div className="mm-tabs">
+                  <div style={card} className="mm-description-column">
+                    <div className="mm-tab-blocks">
                       <button
                         className={
                           tab === "description" ? "active" : ""
                         }
                         onClick={() => setTab("description")}
                       >
-                        Description
+                        <strong>Description</strong>
+                        <span>Statement, examples and hints</span>
                       </button>
 
                       <button
@@ -956,7 +1073,8 @@ export default function Home() {
                         }
                         onClick={() => setTab("submissions")}
                       >
-                        Last Submission
+                        <strong>Last Submission</strong>
+                        <span>Latest code evaluation</span>
                       </button>
                     </div>
 
@@ -1183,7 +1301,7 @@ export default function Home() {
                                 <strong>
                                   {numericResult.correct
                                     ? "✓ Correct Answer"
-                                    : "✗ Incorrect Answer"}
+                                    : "✕ Incorrect Answer"}
                                 </strong>
 
                                 {numericResult.explanation && (
@@ -1232,23 +1350,15 @@ export default function Home() {
                     )}
                   </div>
 
-                  <div>
+                  <div className="mm-editor-column">
                     {mode === "coding" && (
                       <>
                         <div style={card}>
-                          <div className="mm-editor-header">
-                            <span>solution.py</span>
-                            <span>Python 3</span>
-                          </div>
-
-                          <textarea
-                            className="mm-editor"
-                            aria-label="Python code editor"
-                            spellCheck={false}
+                          <NotebookCell
+                            key={question.id}
+                            questionId={question.id}
                             value={code}
-                            onChange={(e) =>
-                              updateCode(e.target.value)
-                            }
+                            onChange={updateCode}
                           />
 
                           <div className="mm-actions">
@@ -1310,165 +1420,17 @@ export default function Home() {
                           )}
                         </div>
 
-                        <div
-                          style={{
-                            ...card,
-                            marginTop: 17,
-                          }}
-                        >
-                          <h3 style={{ marginTop: 0 }}>
-                            Test Cases
-                          </h3>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: 9,
-                              marginBottom: 17,
-                            }}
-                          >
-                            <Tag color="green">
-                              Sample Tests
-                            </Tag>
-                            <Tag color="gray">
-                              Hidden Tests
-                            </Tag>
-                          </div>
-
-                          {question.visibleTests?.length ? (
-                            question.visibleTests.map(
-                              (test, index) => (
-                                <div
-                                  className="mm-example"
-                                  key={index}
-                                >
-                                  <strong>
-                                    Sample {index + 1}
-                                  </strong>
-
-                                  <CodeBox>
-                                    {test}
-                                  </CodeBox>
-                                </div>
-                              )
-                            )
-                          ) : (
-                            <p className="mm-muted">
-                              Sample test details are not
-                              available from the backend.
-                            </p>
-                          )}
-
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: 10,
-                              alignItems: "center",
-                              marginTop: 10,
-                            }}
-                          >
-                            <span>🔒</span>
-                            <p className="mm-muted">
-                              Hidden test cases are checked
-                              during submission. Their
-                              inputs and expected outputs
-                              are not disclosed.
-                            </p>
-                          </div>
-                        </div>
-
-                        {runResult && (
-                          <div
-                            style={{
-                              ...card,
-                              marginTop: 17,
-                            }}
-                          >
-                            <h3 style={{ marginTop: 0 }}>
-                              Execution Results
-                            </h3>
-
-                            <div
-                              className={`mm-result ${
-                                runResult.status === "passed"
-                                  ? "passed"
-                                  : "failed"
-                              }`}
-                            >
-                              <h3>
-                                {runResult.status === "passed"
-                                  ? "✓ Tests Passed"
-                                  : runResult.status ===
-                                      "not_available"
-                                    ? "Tests Unavailable"
-                                    : "✗ Tests Failed"}
-                              </h3>
-
-                              <p>
-                                {runResult.passed} /
-                                {runResult.total} passed
-                              </p>
-
-                              <p>
-                                Score: {runResult.score}%
-                              </p>
-
-                              <p>
-                                Execution time:{" "}
-                                {
-                                  runResult.execution_time_ms
-                                }{" "}
-                                ms
-                              </p>
-
-                              {runResult.error && (
-                                <CodeBox>
-                                  {runResult.error}
-                                </CodeBox>
-                              )}
-
-                              {runResult.tests?.map(
-                                (test, index) => (
-                                  <div
-                                    key={index}
-                                    style={{
-                                      padding: "12px 0",
-                                      borderTop:
-                                        "1px solid #d8dfe9",
-                                    }}
-                                  >
-                                    <strong>
-                                      {test.passed
-                                        ? "✓"
-                                        : "✗"}{" "}
-                                      {test.name}
-                                    </strong>
-
-                                    {test.error && (
-                                      <p>{test.error}</p>
-                                    )}
-                                  </div>
-                                )
-                              )}
-
-                              {runResult.stdout && (
-                                <Panel title="Standard Output">
-                                  <CodeBox>
-                                    {runResult.stdout}
-                                  </CodeBox>
-                                </Panel>
-                              )}
-
-                              {runResult.stderr && (
-                                <Panel title="Error Output">
-                                  <CodeBox>
-                                    {runResult.stderr}
-                                  </CodeBox>
-                                </Panel>
-                              )}
-                            </div>
-                          </div>
-                        )}
+                        <JudgePanel
+                          key={question.id}
+                          questionId={question.id}
+                          visibleTests={question.visibleTests ?? []}
+                          examples={questionExamples}
+                          result={runResult}
+                          action={lastRunAction}
+                          running={running}
+                          error={actionError}
+                          publicTestCount={question.publicTestCount ?? 2}
+                        />
                       </>
                     )}
 
@@ -1501,7 +1463,9 @@ export default function Home() {
                 </div>
               ) : (
                 <div style={card}>
-                  No questions match your filters.
+                  {hasSelection
+                    ? "No questions match these filters. Try another concept or level."
+                    : "Choose a topic above to begin practicing."}
                 </div>
               )}
 
